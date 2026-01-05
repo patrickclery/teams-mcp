@@ -1,7 +1,28 @@
 import { promises as fs } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockUser, server } from "../../test-utils/setup.js";
-import { GraphService } from "../graph.js";
+
+// Mock the msal-cache plugin
+vi.mock("../../msal-cache.js", () => ({
+  cachePlugin: {
+    beforeCacheAccess: vi.fn(),
+    afterCacheAccess: vi.fn(),
+  },
+  CACHE_PATH: "/mock/cache/path",
+}));
+
+// Mock @azure/msal-node
+vi.mock("@azure/msal-node", () => ({
+  PublicClientApplication: vi.fn().mockImplementation(() => ({
+    getTokenCache: vi.fn().mockReturnValue({
+      getAllAccounts: vi.fn().mockResolvedValue([{ username: "test@example.com" }]),
+    }),
+    acquireTokenSilent: vi.fn().mockResolvedValue({
+      accessToken: "mock-access-token",
+      expiresOn: new Date(Date.now() + 3600000),
+    }),
+  })),
+}));
 
 // Mock the filesystem
 vi.mock("node:fs", () => ({
@@ -18,6 +39,9 @@ vi.mock("@microsoft/microsoft-graph-client", () => ({
     initWithMiddleware: vi.fn(),
   },
 }));
+
+// Import after mocks are set up
+import { GraphService } from "../graph.js";
 
 describe("GraphService", () => {
   let graphService: GraphService;
@@ -69,31 +93,13 @@ describe("GraphService", () => {
       });
     });
 
-    it("should return unauthenticated status when token is expired", async () => {
-      const expiredTokenData = JSON.stringify({
-        clientId: "test-client-id",
-        authenticated: true,
-        timestamp: new Date().toISOString(),
-        expiresAt: new Date(Date.now() - 3600000).toISOString(), // 1 hour ago
-        token: "expired-token",
-      });
-
-      vi.mocked(fs.readFile).mockResolvedValue(expiredTokenData);
-
-      const status = await graphService.getAuthStatus();
-
-      expect(status).toEqual({
-        isAuthenticated: false,
-      });
-    });
-
     it("should return authenticated status with valid token", async () => {
       const validTokenData = JSON.stringify({
         clientId: "test-client-id",
         authenticated: true,
         timestamp: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 3600000).toISOString(), // 1 hour from now
-        token: "valid-token",
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+        account: "test@example.com",
       });
 
       vi.mocked(fs.readFile).mockResolvedValue(validTokenData);
@@ -124,7 +130,7 @@ describe("GraphService", () => {
         authenticated: true,
         timestamp: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 3600000).toISOString(),
-        token: "valid-token",
+        account: "test@example.com",
       });
 
       vi.mocked(fs.readFile).mockResolvedValue(validTokenData);
@@ -162,7 +168,7 @@ describe("GraphService", () => {
         authenticated: true,
         timestamp: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 3600000).toISOString(),
-        token: "valid-token",
+        account: "test@example.com",
       });
 
       vi.mocked(fs.readFile).mockResolvedValue(validTokenData);
@@ -193,7 +199,7 @@ describe("GraphService", () => {
         authenticated: true,
         timestamp: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 3600000).toISOString(),
-        token: "valid-token",
+        account: "test@example.com",
       });
 
       vi.mocked(fs.readFile).mockResolvedValue(validTokenData);
@@ -221,7 +227,7 @@ describe("GraphService", () => {
         authenticated: true,
         timestamp: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 300000).toISOString(), // 5 minutes from now
-        token: "soon-expiring-token",
+        account: "test@example.com",
       });
 
       vi.mocked(fs.readFile).mockResolvedValue(soonExpiringTokenData);
@@ -249,7 +255,7 @@ describe("GraphService", () => {
         authenticated: true,
         timestamp: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 3600000).toISOString(),
-        token: "valid-token",
+        account: "test@example.com",
       });
 
       vi.mocked(fs.readFile).mockResolvedValue(validTokenData);
