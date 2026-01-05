@@ -98,4 +98,8 @@ public
 
 # Temporary folders
 tmp/
-temp/ 
+temp/
+/.mcp.json
+/.taskmaster/
+/.claude/
+CLAUDE.local.md

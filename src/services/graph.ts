@@ -1,7 +1,13 @@
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { PublicClientApplication, type Configuration } from "@azure/msal-node";
 import { Client } from "@microsoft/microsoft-graph-client";
+import { cachePlugin } from "../msal-cache.js";
+
+// Microsoft Graph CLI app ID (default public client)
+const CLIENT_ID = "14d82eec-204b-4c2f-b7e8-296a70dab67e";
+const AUTHORITY = "https://login.microsoftonline.com/common";
 
 export interface AuthStatus {
   isAuthenticated: boolean;
@@ -15,12 +21,26 @@ interface StoredAuthInfo {
   authenticated: boolean;
   timestamp: string;
   expiresAt?: string;
-  token: string;
+  account?: string;
 }
+
+// Scopes for delegated (user) authentication
+const DELEGATED_SCOPES = [
+  "User.Read",
+  "User.ReadBasic.All",
+  "Team.ReadBasic.All",
+  "Channel.ReadBasic.All",
+  "ChannelMessage.Read.All",
+  "ChannelMessage.Send",
+  "TeamMember.Read.All",
+  "Chat.ReadBasic",
+  "Chat.ReadWrite",
+];
 
 export class GraphService {
   private static instance: GraphService;
   private client: Client | undefined;
+  private msalClient: PublicClientApplication | undefined;
   private readonly authPath = join(homedir(), ".msgraph-mcp-auth.json");
   private isInitialized = false;
   private authInfo: StoredAuthInfo | undefined;
@@ -36,29 +56,52 @@ export class GraphService {
     if (this.isInitialized) return;
 
     try {
+      // Check if we have stored auth info
       const authData = await fs.readFile(this.authPath, "utf8");
       this.authInfo = JSON.parse(authData);
 
-      if (this.authInfo?.authenticated && this.authInfo?.token) {
-        // Check if token is expired
-        if (this.authInfo.expiresAt) {
-          const expiresAt = new Date(this.authInfo.expiresAt);
-          if (expiresAt <= new Date()) {
-            console.log(
-              "Token has expired. Please re-authenticate with: npx @floriscornel/teams-mcp@latest authenticate"
-            );
-            return;
-          }
-        }
+      if (this.authInfo?.authenticated) {
+        // Create MSAL client with persistent cache
+        const msalConfig: Configuration = {
+          auth: {
+            clientId: CLIENT_ID,
+            authority: AUTHORITY,
+          },
+          cache: {
+            cachePlugin,
+          },
+        };
 
-        // Create Graph client with the saved token
+        this.msalClient = new PublicClientApplication(msalConfig);
+
+        // Create Graph client using MSAL for token acquisition
         this.client = Client.initWithMiddleware({
           authProvider: {
             getAccessToken: async () => {
-              if (!this.authInfo?.token) {
-                throw new Error("No token available");
+              if (!this.msalClient) {
+                throw new Error("MSAL client not initialized");
               }
-              return this.authInfo.token;
+
+              // Try to get token silently using cached refresh token
+              const accounts = await this.msalClient.getTokenCache().getAllAccounts();
+
+              if (accounts.length > 0) {
+                try {
+                  const result = await this.msalClient.acquireTokenSilent({
+                    account: accounts[0],
+                    scopes: DELEGATED_SCOPES,
+                  });
+
+                  if (result?.accessToken) {
+                    return result.accessToken;
+                  }
+                } catch (error) {
+                  console.error("Silent token acquisition failed, re-authentication required:", error);
+                  throw new Error("Token refresh failed. Please re-authenticate with: npx teams-mcp authenticate");
+                }
+              }
+
+              throw new Error("No cached account found. Please authenticate with: npx teams-mcp authenticate");
             },
           },
         });
@@ -66,7 +109,10 @@ export class GraphService {
         this.isInitialized = true;
       }
     } catch (error) {
-      console.error("Failed to initialize Graph client:", error);
+      // If no auth file exists, that's okay - just not authenticated
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        console.error("Failed to initialize Graph client:", error);
+      }
     }
   }
 
@@ -96,7 +142,7 @@ export class GraphService {
 
     if (!this.client) {
       throw new Error(
-        "Not authenticated. Please run the authentication CLI tool first: npx @floriscornel/teams-mcp@latest authenticate"
+        "Not authenticated. Please run the authentication CLI tool first: npx teams-mcp authenticate"
       );
     }
     return this.client;
