@@ -235,7 +235,8 @@ This MCP server is designed to work with AI assistants like Claude/Cursor/VS Cod
 ## 🔒 Security
 
 - All authentication is handled through Microsoft's OAuth 2.0 flow
-- Tokens are securely stored and automatically refreshed
+- **Refresh token support**: Access tokens are automatically renewed using cached refresh tokens, so you don't need to re-authenticate every hour
+- Token cache is stored locally at `~/.teams-mcp-token-cache.json`
 - No sensitive data is logged or exposed
 - Follows Microsoft Graph API security best practices
 
