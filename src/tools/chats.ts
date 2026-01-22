@@ -11,6 +11,7 @@ import type {
   MessageSummary,
   User,
 } from "../types/graph.js";
+import type { GraphMention, UserMentionMapping } from "../types/mentions.js";
 import { markdownToHtml } from "../utils/markdown.js";
 import { processMentionsInHtml } from "../utils/users.js";
 
@@ -246,8 +247,8 @@ export function registerChatTools(server: McpServer, graphService: GraphService)
           contentType = "text";
         }
 
-        // Process @mentions if provided
-        const mentionMappings: Array<{ mention: string; userId: string; displayName: string }> = [];
+        // Process @mentions if provided (only user mentions are supported in chats)
+        const mentionMappings: UserMentionMapping[] = [];
         if (mentions && mentions.length > 0) {
           // Convert provided mentions to mappings with display names
           for (const mention of mentions) {
@@ -276,11 +277,7 @@ export function registerChatTools(server: McpServer, graphService: GraphService)
         }
 
         // Process mentions in HTML content
-        let finalMentions: Array<{
-          id: number;
-          mentionText: string;
-          mentioned: { user: { id: string } };
-        }> = [];
+        let finalMentions: GraphMention[] = [];
         if (mentionMappings.length > 0) {
           const result = processMentionsInHtml(content, mentionMappings);
           content = result.content;
